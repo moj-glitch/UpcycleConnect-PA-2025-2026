@@ -1,0 +1,25 @@
+services:
+  repo:
+    image: alpine/git:2.45.2
+    environment:
+      GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/your-org/your-repo.git}
+      GIT_BRANCH: ${GIT_BRANCH:-main}
+    volumes:
+      - source:/workspace
+    command: >
+      sh -lc "rm -rf /workspace/* /workspace/.[!.]* /workspace/..?* 2>/dev/null || true
+      && git clone --depth 1 --branch \"$${GIT_BRANCH}\" \"$${GIT_REPO_URL}\" /workspace"
+
+  ci:
+    image: golang:1.26.1-alpine
+    working_dir: /workspace
+    depends_on:
+      repo:
+        condition: service_completed_successfully
+    volumes:
+      - source:/workspace
+    command: >
+      sh -lc "go test ./... && go build -o /tmp/oauth ."
+
+volumes:
+  source:
