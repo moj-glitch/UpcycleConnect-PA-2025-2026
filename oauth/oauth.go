@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -13,46 +14,75 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func readBasicClientCredentials(authHeader string) (string, string, error) {
+	if authHeader == "" {
+		return "", "", http.ErrNoCookie
+	}
+
+	authParts := strings.SplitN(authHeader, " ", 2)
+	if len(authParts) != 2 || authParts[0] != "Basic" {
+		return "", "", http.ErrNoCookie
+	}
+
+	basicDecoded, err := base64.StdEncoding.DecodeString(authParts[1])
+	if err != nil {
+		return "", "", err
+	}
+
+	creds := strings.SplitN(string(basicDecoded), ":", 2)
+	if len(creds) != 2 {
+		return "", "", http.ErrNoCookie
+	}
+
+	return creds[0], creds[1], nil
+}
+
+func isEmailIdentifier(identifier string) bool {
+	if identifier == "" {
+		return false
+	}
+
+	_, err := mail.ParseAddress(identifier)
+	return err == nil
+}
+
+func readBasicEmailCredentials(authHeader string) (string, string, error) {
+	if authHeader == "" {
+		return "", "", http.ErrNoCookie
+	}
+
+	authParts := strings.SplitN(authHeader, " ", 2)
+	if len(authParts) != 2 || authParts[0] != "Basic" {
+		return "", "", http.ErrNoCookie
+	}
+
+	basicDecoded, err := base64.StdEncoding.DecodeString(authParts[1])
+	if err != nil {
+		return "", "", err
+	}
+
+	creds := strings.SplitN(string(basicDecoded), ":", 2)
+	if len(creds) != 2 {
+		return "", "", http.ErrNoCookie
+	}
+
+	return creds[0], creds[1], nil
+}
+
 func token(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "The URI does not support the requested method.")
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
-		return
-	}
-
-	authParts := strings.SplitN(authHeader, " ", 2)
-	if len(authParts) != 2 || authParts[0] != "Basic" {
-		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
-		return
-	}
-
-	basic := authParts[1]
-	basicDecoded, err := base64.StdEncoding.DecodeString(basic)
-	if err != nil {
-		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
-		return
-	}
-
-	creds := strings.SplitN(string(basicDecoded), ":", 2)
-	if len(creds) != 2 {
-		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
-		return
-	}
-
-	client := creds[0]
-	secret := creds[1]
-	clientID, err := strconv.Atoi(client)
+	clientIdentifier, secret, err := readBasicClientCredentials(r.Header.Get("Authorization"))
 	if err != nil {
 		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
 		return
 	}
 
 	var hashedSecret string
+	var clientID int
 
 	conn, err := pgx.Connect(context.Background(), DATABASE_AUTH_URL)
 	if err != nil {
@@ -61,7 +91,14 @@ func token(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(context.Background())
 
-	err = conn.QueryRow(context.Background(), "select password from client where client_id=$1", clientID).Scan(&hashedSecret)
+	if isEmailIdentifier(clientIdentifier) {
+		err = conn.QueryRow(context.Background(), "select client_id, password from client where email=$1", clientIdentifier).Scan(&clientID, &hashedSecret)
+	} else {
+		clientID, err = strconv.Atoi(clientIdentifier)
+		if err == nil {
+			err = conn.QueryRow(context.Background(), "select password from client where client_id=$1", clientID).Scan(&hashedSecret)
+		}
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
 		return
@@ -96,6 +133,62 @@ func token(w http.ResponseWriter, r *http.Request) {
 		"token_type":   "Bearer",
 		"expires_in":   3600,
 		"scope":        "",
+	})
+}
+
+func roles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "The URI does not support the requested method.")
+		return
+	}
+
+	email, secret, err := readBasicEmailCredentials(r.Header.Get("Authorization"))
+	if err != nil {
+		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
+		return
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, DATABASE_AUTH_URL)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close(ctx)
+
+	var hashedSecret string
+	var clientID int
+	err = conn.QueryRow(ctx, "select client_id, password from client where email=$1", email).Scan(&clientID, &hashedSecret)
+	if err != nil {
+		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hashedSecret), []byte(secret)); err != nil {
+		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
+		return
+	}
+
+	rows, err := conn.Query(ctx, "select role.libelle from possede join role on possede.role_id = role.role_id where possede.client_id = $1 order by role.role_id asc", clientID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	roles := make([]string, 0)
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		roles = append(roles, role)
+	}
+
+	writeJSON(w, http.StatusOK, ClientRolesResponse{
+		ClientID: clientID,
+		Roles:    roles,
 	})
 }
 
