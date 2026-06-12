@@ -161,9 +161,9 @@ type Materiau struct {
 	Toxicite               float64 `json:"toxicite"`
 }
 
-type ClientRolesResponse {
-	ClientID				string `json:client_id`
-	Roles					[]string `json:roles`
+type ClientRolesResponse struct {
+	ClientID				string `json:"client_id"`
+	Roles					[]string `json:"roles"`
 }
 
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
