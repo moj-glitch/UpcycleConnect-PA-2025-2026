@@ -161,6 +161,11 @@ type Materiau struct {
 	Toxicite               float64 `json:"toxicite"`
 }
 
+type ClientRolesResponse {
+	ClientID				string `json:client_id`
+	Roles					[]string `json:roles`
+}
+
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if contentType != "" && !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") && !strings.HasPrefix(contentType, "multipart/form-data") {
