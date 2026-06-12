@@ -12,7 +12,6 @@ const DATABASE_PRO_URL string = "postgres://postgres:035464@localhost:5432/datab
 const DATABASE_ADMIN_URL string = "postgres://postgres:035464@localhost:5432/database"
 
 func main() {
-	http.HandleFunc("/api/v1/inscription", createAccount)
 	http.HandleFunc("/api/v1/evenements", evenementsHandler)
 	http.HandleFunc("/api/v1/tutoriels", tutorielsHandler)
 	http.HandleFunc("/api/v1/annonces", annoncesHandler)
