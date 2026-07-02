@@ -187,7 +187,7 @@ func roles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ClientRolesResponse{
-		ClientID: clientID,
+		ClientID: strconv.Itoa(clientID),
 		Roles:    roles,
 	})
 }
