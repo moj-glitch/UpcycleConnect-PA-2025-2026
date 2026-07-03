@@ -14,7 +14,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func readBasicClientCredentials(authHeader string) (string, string, error) {
+
+func readBasicCredentials(authHeader string) (string, string, error) {
 	if authHeader == "" {
 		return "", "", http.ErrNoCookie
 	}
@@ -46,36 +47,13 @@ func isEmailIdentifier(identifier string) bool {
 	return err == nil
 }
 
-func readBasicEmailCredentials(authHeader string) (string, string, error) {
-	if authHeader == "" {
-		return "", "", http.ErrNoCookie
-	}
-
-	authParts := strings.SplitN(authHeader, " ", 2)
-	if len(authParts) != 2 || authParts[0] != "Basic" {
-		return "", "", http.ErrNoCookie
-	}
-
-	basicDecoded, err := base64.StdEncoding.DecodeString(authParts[1])
-	if err != nil {
-		return "", "", err
-	}
-
-	creds := strings.SplitN(string(basicDecoded), ":", 2)
-	if len(creds) != 2 {
-		return "", "", http.ErrNoCookie
-	}
-
-	return creds[0], creds[1], nil
-}
-
 func token(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "The URI does not support the requested method.")
 		return
 	}
 
-	clientIdentifier, secret, err := readBasicClientCredentials(r.Header.Get("Authorization"))
+	clientIdentifier, secret, err := readBasicCredentials(r.Header.Get("Authorization"))
 	if err != nil {
 		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
 		return
@@ -126,9 +104,7 @@ func token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": accessToken,
 		"token_type":   "Bearer",
 		"expires_in":   3600,
@@ -142,7 +118,7 @@ func roles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, secret, err := readBasicEmailCredentials(r.Header.Get("Authorization"))
+	email, secret, err := readBasicCredentials(r.Header.Get("Authorization"))
 	if err != nil {
 		writeAPIError(w, http.StatusUnauthorized, "invalid_client", "The requested service needs credentials, but the ones provided were invalid.")
 		return
@@ -176,19 +152,19 @@ func roles(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	roles := make([]string, 0)
+	roleList := make([]string, 0)
 	for rows.Next() {
 		var role string
 		if err := rows.Scan(&role); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		roles = append(roles, role)
+		roleList = append(roleList, role)
 	}
 
 	writeJSON(w, http.StatusOK, ClientRolesResponse{
 		ClientID: strconv.Itoa(clientID),
-		Roles:    roles,
+		Roles:    roleList,
 	})
 }
 
