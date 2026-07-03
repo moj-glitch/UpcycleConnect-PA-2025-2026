@@ -6,14 +6,22 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-const OAUTH_URL = "http://localhost/oauth/v3/introspect"
-const DATA_DIR = "C:/Users/tomto/Documents/go/oauth/DATA"
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+var OAUTH_URL = getEnv("OAUTH_URL", "http://localhost:8080/oauth/v3/introspect")
+var DATA_DIR = getEnv("DATA_DIR", "./DATA")
 
 type Thread struct {
 	ThreadID   int    `json:"thread_id"`
@@ -162,8 +170,8 @@ type Materiau struct {
 }
 
 type ClientRolesResponse struct {
-	ClientID				string `json:"client_id"`
-	Roles					[]string `json:"roles"`
+	ClientID string   `json:"client_id"`
+	Roles    []string `json:"roles"`
 }
 
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
@@ -179,12 +187,11 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
 
-	if strings.HasPrefix(authHeader, "Basic ") {
-		writeAPIError(w, http.StatusBadRequest, "duplicate_credentials", "You haven't provided a token to introspect.")
+	req, err := http.NewRequest("GET", OAUTH_URL, nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "server_error", "Could not build introspection request.")
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
-
-	req, err := http.NewRequest("GET", OAUTH_URL, nil)
 	req.Header.Add("Authorization", authHeader)
 
 	client := &http.Client{}
