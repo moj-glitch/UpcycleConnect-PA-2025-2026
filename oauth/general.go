@@ -170,8 +170,8 @@ type Materiau struct {
 }
 
 type ClientRolesResponse struct {
-	ClientID string   `json:"client_id"`
-	Roles    []string `json:"roles"`
+	ClientID				string `json:"client_id"`
+	Roles					[]string `json:"roles"`
 }
 
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
