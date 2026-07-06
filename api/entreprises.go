@@ -77,6 +77,11 @@ func deposerEntreprise(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !contains(token.Scope, "pro:entreprise_administrateur") {
+		writeAPIError(w, http.StatusForbidden, "access_denied", "Only administrators can create entreprises directly. Register with account_type=entreprise to found a company as its CEO.")
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
@@ -121,6 +126,11 @@ func deposerEntreprise(w http.ResponseWriter, r *http.Request) {
 func getEntreprise(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
+	token := tryAuth(w, r)
+	if !token.Active {
+		return
+	}
+
 	query := r.URL.Query()
 	idParam := query.Get("id")
 
@@ -131,10 +141,17 @@ func getEntreprise(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(ctx)
 
+	isAdmin := contains(token.Scope, "pro:entreprise_administrateur")
+
 	if idParam != "" {
 		entrepriseID, err := strconv.Atoi(idParam)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, "invalid_request", "Invalid entreprise_id")
+			return
+		}
+
+		if !isAdmin && !isUserInEntreprise(ctx, conn, token.ClientID, entrepriseID) {
+			writeAPIError(w, http.StatusForbidden, "access_denied", "You can only access your own entreprise")
 			return
 		}
 
@@ -150,6 +167,11 @@ func getEntreprise(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, http.StatusOK, entreprise)
+		return
+	}
+
+	if !isAdmin {
+		writeAPIError(w, http.StatusForbidden, "access_denied", "Listing all entreprises requires pro:entreprise_administrateur. Query your own entreprise with ?id=")
 		return
 	}
 
@@ -444,6 +466,11 @@ func deposerEmploye(w http.ResponseWriter, r *http.Request) {
 func getEmployes(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
+	token := tryAuth(w, r)
+	if !token.Active {
+		return
+	}
+
 	query := r.URL.Query()
 	entrepriseIDParam := query.Get("entreprise_id")
 	if entrepriseIDParam == "" {
@@ -478,6 +505,12 @@ func getEmployes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close(ctx)
+
+	isAdmin := contains(token.Scope, "pro:entreprise_administrateur") || contains(token.Scope, "pro:rh_support")
+	if !isAdmin && !isUserInEntreprise(ctx, conn, token.ClientID, entrepriseID) {
+		writeAPIError(w, http.StatusForbidden, "access_denied", "You can only access employees of your own entreprise")
+		return
+	}
 
 	rows, err := conn.Query(
 		ctx,
@@ -656,5 +689,155 @@ func supprimerEmploye(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "Employe removed successfully",
+	})
+}
+
+func employeAccountHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeAPIError(w, http.StatusMethodNotAllowed, "invalid_request", "Method not allowed")
+		return
+	}
+	rhCreateEmployeAccount(w, r)
+}
+
+func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	token := tryAuth(w, r)
+	if !token.Active {
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
+		return
+	}
+
+	entrepriseIDParam := r.PostForm.Get("entreprise_id")
+	if entrepriseIDParam == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Missing 'entreprise_id' parameter")
+		return
+	}
+	entrepriseID, err := strconv.Atoi(entrepriseIDParam)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Invalid entreprise_id")
+		return
+	}
+
+	clientEmail := r.PostForm.Get("client_email")
+	clientSecret := r.PostForm.Get("client_secret")
+	clientNom := r.PostForm.Get("client_nom")
+	clientPrenom := r.PostForm.Get("client_prenom")
+	clientTelephone := r.PostForm.Get("client_telephone")
+	clientAdresse := r.PostForm.Get("client_adresse")
+	clientCodePostal := r.PostForm.Get("client_code_postal")
+	clientVille := r.PostForm.Get("client_ville")
+
+	if clientEmail == "" || clientSecret == "" || clientNom == "" || clientPrenom == "" || clientTelephone == "" || clientAdresse == "" || clientCodePostal == "" || clientVille == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Missing required fields: client_email, client_secret, client_nom, client_prenom, client_telephone, client_adresse, client_code_postal, client_ville")
+		return
+	}
+
+	managerIDParam := r.PostForm.Get("manager_id")
+	var managerID *int
+	if managerIDParam != "" {
+		mid, convErr := strconv.Atoi(managerIDParam)
+		if convErr != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "Invalid manager_id")
+			return
+		}
+		managerID = &mid
+	}
+
+	requestedRoles := r.PostForm["roles"] // repeated form field: roles=pro:manager&roles=pro:rh
+	grantedRoles := make([]string, 0, len(requestedRoles))
+	for _, role := range requestedRoles {
+		if role == CEOScope {
+			writeAPIError(w, http.StatusForbidden, "access_denied", "RH cannot grant the CEO role (pro:pdg). Only account registration as account_type=entreprise creates a CEO.")
+			return
+		}
+		if !contains(RHAssignableRoles, role) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "Unknown or non-assignable role: "+role)
+			return
+		}
+		grantedRoles = append(grantedRoles, role)
+	}
+
+	conn, err := pgx.Connect(ctx, DATABASE_AUTH_URL)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close(ctx)
+
+	isRHSupport := contains(token.Scope, "pro:rh_support")
+	isRHOwn := contains(token.Scope, "pro:rh") && isUserInEntreprise(ctx, conn, token.ClientID, entrepriseID)
+	if !isRHSupport && !isRHOwn {
+		writeAPIError(w, http.StatusForbidden, "access_denied", "Not authorized to create employe accounts for this entreprise")
+		return
+	}
+
+	var count int64
+	err = conn.QueryRow(ctx, "select count(client_id) from client where email=$1", clientEmail).Scan(&count)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if count > 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Email already exists.")
+		return
+	}
+
+	hashedPassword := hashPassword(clientSecret)
+	if hashedPassword == "" {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var newClientID int
+	err = tx.QueryRow(
+		ctx,
+		"insert into client (nom, prenom, email, password, telephone, adresse, code_postal, ville, score) values ($1, $2, $3, $4, $5, $6, $7, $8, 0) returning client_id",
+		clientNom, clientPrenom, clientEmail, hashedPassword, clientTelephone, clientAdresse, clientCodePostal, clientVille,
+	).Scan(&newClientID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		"insert into employe (entreprise_id, client_id, manager_id) values ($1, $2, $3)",
+		entrepriseID, newClientID, managerID,
+	)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(grantedRoles) > 0 {
+		if err := grantRoles(ctx, tx, newClientID, grantedRoles); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"message":       "Employe account created successfully",
+		"client_id":     newClientID,
+		"entreprise_id": entrepriseID,
+		"roles":         grantedRoles,
 	})
 }
