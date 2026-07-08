@@ -1,11 +1,39 @@
 FROM php:8.3-apache
 
+# Copier le contenu de l'UI
 COPY ui/ /var/www/html/
 
+# Configurer PHP
 RUN { \
       echo "upload_max_filesize=64M"; \
       echo "post_max_size=64M"; \
     } > /usr/local/etc/php/conf.d/uploads.ini \
     && a2enmod rewrite
 
-EXPOSE 80
+# Installer OpenSSL pour générer le certificat
+RUN apt-get update && apt-get install -y openssl
+
+# Générer un certificat auto-signé
+RUN mkdir -p /etc/ssl/private && \
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -subj "/C=FR/ST=IDF/L=Paris/O=MyOrganization/CN=localhost" \
+    -keyout /etc/ssl/private/selfsigned.key \
+    -out /etc/ssl/certs/selfsigned.crt
+
+# Activer le module SSL et configurer Apache pour TLS
+RUN a2enmod ssl
+
+# Créer une configuration SSL pour Apache
+RUN echo "<VirtualHost *:443>\n\
+    DocumentRoot /var/www/html\n\
+    SSLEngine on\n\
+    SSLCertificateFile /etc/ssl/certs/selfsigned.crt\n\
+    SSLCertificateKeyFile /etc/ssl/private/selfsigned.key\n\
+</VirtualHost>" > /etc/apache2/sites-available/default-ssl.conf
+
+# Activer le site SSL
+RUN a2ensite default-ssl
+
+# Exposer le port 443 pour HTTPS
+EXPOSE 443
+
