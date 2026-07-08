@@ -1,0 +1,11 @@
+FROM php:8.3-apache
+
+COPY ui/ /var/www/html/
+
+RUN { \
+      echo "upload_max_filesize=64M"; \
+      echo "post_max_size=64M"; \
+    } > /usr/local/etc/php/conf.d/uploads.ini \
+    && a2enmod rewrite
+
+EXPOSE 80

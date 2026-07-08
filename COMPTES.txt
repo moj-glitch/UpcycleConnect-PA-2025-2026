@@ -1,0 +1,82 @@
+COMPTES DE DEMONSTRATION - UpcycleConnect
+=============================================
+
+Tous les comptes se connectent sur la page connection.php,
+avec l email (ou le client_id) comme identifiant.
+
+UTILISATEURS GRAND PUBLIC (Freemium)
+------------------------------------
+  client_id  1 | alice.martin@mail.fr                   | mdp: CycleVert45! | Client grand public (Freemium)
+               roles: (aucun role)
+  client_id  2 | bob.durand@mail.fr                     | mdp: TerreTerre27! | Client grand public (Freemium)
+               roles: (aucun role)
+  client_id  3 | chloe.petit@mail.fr                    | mdp: CycleSable21! | Client grand public (Freemium)
+               roles: (aucun role)
+  client_id  4 | david.moreau@mail.fr                   | mdp: PinRoche14!  | Client grand public (Freemium)
+               roles: (aucun role)
+  client_id  5 | emma.roux@mail.fr                      | mdp: VertCycle37! | Client grand public (Freemium)
+               roles: (aucun role)
+
+ENTREPRISE 1 : EcoRecup (Pro Gratuit, 10 membres dont le PDG)
+-------------------------------------------------------------
+  client_id  6 | hugo.lefevre@ecorecup.fr               | mdp: TerreSable87! | PDG EcoRecup (entreprise Pro Gratuit)
+               roles: pro:pdg pro:entreprise_manager pro:rh pro:manager pro:gestionnaire_contrats pro:project_manager
+  client_id  7 | ines.bernard@ecorecup.fr               | mdp: VertSable35! | Employe EcoRecup
+               roles: pro:rh
+  client_id  8 | jules.thomas@ecorecup.fr               | mdp: SableRoche38! | Employe EcoRecup
+               roles: pro:rh
+  client_id  9 | lea.robert@ecorecup.fr                 | mdp: LunePin45!   | Employe EcoRecup
+               roles: pro:manager
+  client_id 10 | louis.richard@ecorecup.fr              | mdp: VertBois99!  | Employe EcoRecup
+               roles: pro:manager
+  client_id 11 | manon.dubois@ecorecup.fr               | mdp: RocheAube45! | Employe EcoRecup
+               roles: pro:gestionnaire_contrats
+  client_id 12 | nathan.laurent@ecorecup.fr             | mdp: BoisTerre53! | Employe EcoRecup
+               roles: pro:gestionnaire_contrats
+  client_id 13 | oceane.simon@ecorecup.fr               | mdp: CycleCycle58! | Employe EcoRecup
+               roles: pro:project_manager
+  client_id 14 | paul.michel@ecorecup.fr                | mdp: CycleAube54! | Employe EcoRecup
+               roles: pro:project_manager
+  client_id 15 | rose.garcia@ecorecup.fr                | mdp: PinFluo15!   | Employe EcoRecup
+               roles: pro:entreprise_manager
+
+ENTREPRISE 2 : GreenFab (Pro Payant, 15 membres dont la PDG)
+------------------------------------------------------------
+  client_id 16 | sarah.fontaine@greenfab.fr             | mdp: LuneSable25! | PDG GreenFab (entreprise Pro Payant)
+               roles: pro:pdg pro:entreprise_manager pro:rh pro:manager pro:gestionnaire_contrats pro:project_manager
+  client_id 17 | adam.chevalier@greenfab.fr             | mdp: RocheCycle80! | Employe GreenFab
+               roles: pro:rh
+  client_id 18 | bella.gauthier@greenfab.fr             | mdp: FluoPin56!   | Employe GreenFab
+               roles: pro:rh
+  client_id 19 | cyril.perrin@greenfab.fr               | mdp: PinTerre18!  | Employe GreenFab
+               roles: pro:manager
+  client_id 20 | diane.morel@greenfab.fr                | mdp: VertTerre47! | Employe GreenFab
+               roles: pro:manager
+  client_id 21 | enzo.girard@greenfab.fr                | mdp: CycleTerre22! | Employe GreenFab
+               roles: pro:manager
+  client_id 22 | fanny.andre@greenfab.fr                | mdp: RocheFluo68! | Employe GreenFab
+               roles: pro:gestionnaire_contrats
+  client_id 23 | gael.mercier@greenfab.fr               | mdp: AubeBois57!  | Employe GreenFab
+               roles: pro:gestionnaire_contrats
+  client_id 24 | hana.blanc@greenfab.fr                 | mdp: AubeTerre95! | Employe GreenFab
+               roles: pro:project_manager
+  client_id 25 | ivan.guerin@greenfab.fr                | mdp: FluoCycle87! | Employe GreenFab
+               roles: pro:project_manager
+  client_id 26 | julie.boyer@greenfab.fr                | mdp: BoisSable41! | Employe GreenFab
+               roles: pro:entreprise_manager
+  client_id 27 | kevin.faure@greenfab.fr                | mdp: BoisLune58!  | Employe GreenFab
+               roles: pro:rh pro:manager
+  client_id 28 | lina.roussel@greenfab.fr               | mdp: FluoSable38! | Employe GreenFab
+               roles: pro:gestionnaire_contrats pro:project_manager
+  client_id 29 | marc.vincent@greenfab.fr               | mdp: AubeVert39!  | Employe GreenFab
+               roles: (aucun role)
+  client_id 30 | nina.muller@greenfab.fr                | mdp: VertAube61!  | Employe GreenFab
+               roles: (aucun role)
+
+ADMINISTRATEURS DU SITE
+-----------------------
+  client_id 31 | admin@upcycleconnect.fr                | mdp: FluoCycle37! | Administrateur du site (tous roles admin)
+               roles: admin:general admin:applications public:admin_threads public:admin_annonces evenements:manager tutorials:content_manager pro:entreprise_administrateur pro:rh_support
+  client_id 32 | moderateur@upcycleconnect.fr           | mdp: PinAube37!   | Administrateur moderation/contenu
+               roles: public:admin_threads public:admin_annonces evenements:manager tutorials:content_manager
+

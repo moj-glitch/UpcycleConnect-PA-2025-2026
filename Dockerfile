@@ -1,18 +1,13 @@
-FROM golang:1.26.1-alpine AS build
-
-ARG GIT_REPO_URL
-ARG GIT_BRANCH
-
+FROM golang:1.23-alpine AS build
 WORKDIR /src
-RUN apk add --no-cache ca-certificates git
 
-RUN git clone --depth 1 --branch "${GIT_BRANCH}" "${GIT_REPO_URL}" /src/repo
-WORKDIR /src/repo/oauth
+COPY oauth/go.mod oauth/go.sum ./
 RUN go mod download
+
+COPY oauth/. .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/oauth .
 
 FROM alpine:3.21
-
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /out/oauth /app/oauth

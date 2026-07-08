@@ -311,4 +311,3 @@ create table projet(
     texte text NOT NULL,
     date_creation TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-

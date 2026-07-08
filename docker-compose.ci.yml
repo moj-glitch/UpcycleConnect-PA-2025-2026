@@ -2,7 +2,7 @@ services:
   repo:
     image: alpine/git:2.45.2
     environment:
-      GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/your-org/your-repo.git}
+      GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/moj-glitch/UpcycleConnect-PA-2025-2026.git}
       GIT_BRANCH: ${GIT_BRANCH:-main}
     volumes:
       - source:/workspace
@@ -11,7 +11,7 @@ services:
       && git clone --depth 1 --branch \"$${GIT_BRANCH}\" \"$${GIT_REPO_URL}\" /workspace"
 
   ci:
-    image: golang:1.26.1-alpine
+    image: golang:1.23-alpine
     working_dir: /workspace
     depends_on:
       repo:
@@ -19,7 +19,7 @@ services:
     volumes:
       - source:/workspace
     command: >
-      sh -lc "go test ./... && go build -o /tmp/oauth ."
+      sh -lc "cd oauth && go test ./... && go build -o /tmp/oauth . && cd ../api && go test ./... && go build -o /tmp/api ."
 
 volumes:
   source:

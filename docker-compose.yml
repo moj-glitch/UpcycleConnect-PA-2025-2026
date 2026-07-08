@@ -2,15 +2,24 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: database
-      POSTGRES_USER: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-database}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./create_db.sql:/docker-entrypoint-initdb.d/01_create_db.sql:ro
+      - ./db/add_thread_author.sql:/docker-entrypoint-initdb.d/02_add_thread_author.sql:ro
+      - ./db/add_actor.sql:/docker-entrypoint-initdb.d/03_add_actor.sql:ro
+      - ./db/fix_barcode_trigger.sql:/docker-entrypoint-initdb.d/04_fix_barcode_trigger.sql:ro
+      - ./db/seed_roles.sql:/docker-entrypoint-initdb.d/05_seed_roles.sql:ro
+      - ./db/seed_forfaits.sql:/docker-entrypoint-initdb.d/06_seed_forfaits.sql:ro
+      - ./db/seed_applications.sql:/docker-entrypoint-initdb.d/07_seed_applications.sql:ro
+      - ./db/seed_admin_role.sql:/docker-entrypoint-initdb.d/08_seed_admin_role.sql:ro
+      - ./db/seed_data.sql:/docker-entrypoint-initdb.d/09_seed_data.sql:ro
     secrets:
       - db_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d database"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-database}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,26 +30,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        GIT_REPO_URL: https://github.com/moj-glitch/UpcycleConnect-PA-2025-2026.git
-        GIT_BRANCH: OAUTH-GO-MAIN
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "80:80"
+      - "8080:80"
     environment:
-      DATABASE_AUTH_URL_FILE: /run/secrets/database_url
-      DATABASE_DATA_URL_FILE: /run/secrets/database_url
-      DATABASE_PUBLIC_URL_FILE: /run/secrets/database_url
-      DATABASE_PRO_URL_FILE: /run/secrets/database_url
-      DATABASE_ADMIN_URL_FILE: /run/secrets/database_url
-      OAUTH_URL: http://localhost/oauth/v3/introspect
+      # The app only reads plain env vars (getEnv), not the *_FILE secrets
+      # convention, so this has to be the real connection string rather
+      # than a path to a mounted secret. ${POSTGRES_PASSWORD} comes from
+      # .env and must match secrets/db_password.txt's content.
+      PORT: "80"
+      DATABASE_AUTH_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-database}?sslmode=disable
       DATA_DIR: /data
     volumes:
-      - appdata:/data
-    secrets:
-      - database_url
+      - oauth_data:/data
     networks:
       - appnet
 
@@ -48,26 +52,53 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-      args:
-        GIT_REPO_URL: https://github.com/moj-glitch/UpcycleConnect-PA-2025-2026.git
-        GIT_BRANCH: API-GO-MAIN
     depends_on:
       db:
         condition: service_healthy
+      oauth:
+        condition: service_started
     ports:
-      - "8080:8080"
+      - "8081:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_AUTH_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-database}?sslmode=disable
+      # The fix that actually matters for cross-container calls: "oauth",
+      # not "localhost", resolved via Docker's internal DNS, on the port
+      # the oauth container actually listens on (80, per its Dockerfile).
+      OAUTH_URL: http://oauth:80/oauth/v3/introspect
+      DATA_DIR: /data
+    volumes:
+      - api_data:/data
+    networks:
+      - appnet
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    depends_on:
+      oauth:
+        condition: service_started
+      api:
+        condition: service_started
+    ports:
+      - "80:80"
+    environment:
+      OAUTH_URL: http://oauth:80
+      API_URL: http://api:8080
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     networks:
       - appnet
 
 volumes:
   pgdata:
-  appdata:
+  oauth_data:
+  api_data:
 
 secrets:
   db_password:
     file: ./secrets/db_password.txt
-  database_url:
-    file: ./secrets/database_url.txt
 
 networks:
   appnet:
