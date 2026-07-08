@@ -390,3 +390,6 @@ func supprimerTutoriel(w http.ResponseWriter, r *http.Request, token *Introspect
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+
+

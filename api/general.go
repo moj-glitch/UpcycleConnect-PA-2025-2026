@@ -1,19 +1,79 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-const OAUTH_URL = "http://localhost/oauth/v3/introspect"
-const DATA_DIR = "C:/Users/tomto/Documents/go/oauth/DATA"
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+var OAUTH_URL = getEnv("OAUTH_URL", "http://localhost:8080/oauth/v3/introspect")
+var DATA_DIR = getEnv("DATA_DIR", "./DATA")
+
+// These mirror the CHECK constraints in create_db.sql exactly - see the
+// oauth service's copy of these for the full explanation.
+var (
+	telephoneRegexp  = regexp.MustCompile(`^\+[0-9]{11}$`)
+	siretRegexp      = regexp.MustCompile(`^[0-9]{14}$`)
+	codePostalRegexp = regexp.MustCompile(`^[0-9]{5}$`)
+)
+
+// CEOScope marks a client as the founder/owner of an entreprise. It is never
+// assignable through the RH "create employee" flow - only account
+// registration with account_type=entreprise (oauth service) grants it.
+const CEOScope = "pro:pdg"
+
+// CompanyScopedRoles mirrors the oauth service's list: the roles granted to
+// whoever registers a new entreprise (the CEO).
+var CompanyScopedRoles = []string{
+	CEOScope,
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+// RHAssignableRoles is the whitelist of roles an RH user is allowed to grant
+// to a new employee account. CEOScope is deliberately excluded.
+var RHAssignableRoles = []string{
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+// grantRoles inserts a possede row for each role libelle.
+func grantRoles(ctx context.Context, tx pgx.Tx, clientID int, roleLibelles []string) error {
+	for _, libelle := range roleLibelles {
+		_, err := tx.Exec(
+			ctx,
+			"insert into possede (client_id, role_id) select $1, role_id from role where libelle=$2",
+			clientID, libelle,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type Thread struct {
 	ThreadID   int    `json:"thread_id"`
@@ -179,7 +239,15 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
 
-	req, err := http.NewRequest("GET", OAUTH_URL, nil)
+	// introspect() on the oauth service requires POST + this exact
+	// Content-Type - it rejects anything else (including the previous GET
+	// with no body) with a 400 before ever looking at the token.
+	req, err := http.NewRequest("POST", OAUTH_URL, nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "server_error", "Could not build introspection request.")
+		return &IntrospectionPayload{false, nil, 0, ""}
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("Authorization", authHeader)
 
 	client := &http.Client{}
@@ -285,3 +353,6 @@ func writeAPIError(w http.ResponseWriter, status int, errCode string, descriptio
 		"error_description": description,
 	})
 }
+
+
+

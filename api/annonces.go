@@ -61,15 +61,29 @@ func categoriesAnnoncesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func deposerAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
+	if err := r.ParseForm(); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
+		return
+	}
+
 	conn, err := pgx.Connect(context.Background(), DATABASE_PUBLIC_URL)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to connect to the database")
 		return
 	}
 	defer conn.Close(context.Background())
-	_, err = conn.Exec(
+
+	tx, err := conn.Begin(context.Background())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to start transaction")
+		return
+	}
+	defer tx.Rollback(context.Background())
+
+	var annonceID int
+	err = tx.QueryRow(
 		context.Background(),
-		"insert into annonce (vendeur, categorie, titre, prix, description, etat, taxe, image) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+		"insert into annonce (vendeur, categorie, titre, prix, description, etat, taxe, image) values ($1, $2, $3, $4, $5, $6, $7, $8) returning annonce_id",
 		token.ClientID,
 		r.FormValue("categorie"),
 		r.FormValue("titre"),
@@ -78,13 +92,89 @@ func deposerAnnonce(w http.ResponseWriter, r *http.Request, token *Introspection
 		r.FormValue("etat"),
 		r.FormValue("taxe"),
 		r.FormValue("image"),
-	)
+	).Scan(&annonceID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to insert the annonce")
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	for _, materieauID := range r.Form["materiaux"] {
+		if materieauID == "" {
+			continue
+		}
+		_, err = tx.Exec(context.Background(), "insert into utilise (annonce_id, materieau_id) values ($1, $2)", annonceID, materieauID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to record the materiau used")
+			return
+		}
+	}
+
+	if err := tx.Commit(context.Background()); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to commit transaction")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{"annonce_id": annonceID})
+}
+
+func achatAnnonceHandler(w http.ResponseWriter, r *http.Request) {
+	token := tryAuth(w, r)
+
+	if token.Active {
+		if r.Method != http.MethodPatch {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "The URI does not support the requested method.")
+			return
+		}
+		acheterAnnonce(w, r, token)
+	}
+}
+
+// acheterAnnonce lets a buyer claim an available annonce. It only ever
+// touches etat and acheteur - the barcode column is computed by the
+// generate_barcode_on_buy() trigger in create_db.sql, never by the API.
+func acheterAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
+	if r.FormValue("id") == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Missing required field: id")
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), DATABASE_PUBLIC_URL)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to connect to the database")
+		return
+	}
+	defer conn.Close(context.Background())
+
+	var vendeur int
+	var etat string
+	err = conn.QueryRow(context.Background(), "select vendeur, etat from annonce where annonce_id = $1", r.FormValue("id")).Scan(&vendeur, &etat)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "Annonce not found"})
+		return
+	}
+
+	if vendeur == token.ClientID {
+		writeAPIError(w, http.StatusForbidden, "access_denied", "You cannot buy your own annonce")
+		return
+	}
+
+	if etat != "D" {
+		writeAPIError(w, http.StatusConflict, "invalid_request", "This annonce is no longer available")
+		return
+	}
+
+	tag, err := conn.Exec(context.Background(), "update annonce set acheteur = $1 where annonce_id = $2 and etat = 'D'", token.ClientID, r.FormValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to update the annonce")
+		return
+	}
+
+	if tag.RowsAffected() == 0 {
+		writeAPIError(w, http.StatusConflict, "invalid_request", "This annonce is no longer available")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func supprimerAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
@@ -102,7 +192,7 @@ func supprimerAnnonce(w http.ResponseWriter, r *http.Request, token *Introspecti
 		return
 	}
 
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_annonces")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_annonces")
 	if token.ClientID != vendeur && !isAdmin {
 		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to delete this annonce")
 		return
@@ -126,7 +216,23 @@ func getAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayl
 		}
 		defer conn.Close(context.Background())
 
-		rows, err := conn.Query(context.Background(), "select annonce_id, client.nom as vendeur inner join client on client.client_id = annonce.vendeur, client.nom as acheteur inner join client on client.client_id = annonce.acheteur, categorie.libelle as categorie inner join categorie_annonce on categorie_annonce.categorie_id = annonce.categorie, titre, prix, description, etat, taxe, image, barcode, date_publication from annonce limit $1 offset $2", r.URL.Query().Get("size"), r.URL.Query().Get("from"))
+		listQuery := `select annonce.annonce_id, vendeur_client.nom, coalesce(acheteur_client.nom, ''), categorie_annonce.libelle,
+			annonce.titre, annonce.prix, annonce.description, annonce.etat, annonce.taxe, annonce.image, annonce.barcode, annonce.date_publication
+			from annonce
+			inner join client vendeur_client on vendeur_client.client_id = annonce.vendeur
+			left join client acheteur_client on acheteur_client.client_id = annonce.acheteur
+			inner join categorie_annonce on categorie_annonce.categorie_id = annonce.categorie`
+		listArgs := []any{}
+		argPos := 1
+		if r.URL.Query().Get("mes_achats") == "1" {
+			listQuery += " where annonce.acheteur = $" + strconv.Itoa(argPos)
+			listArgs = append(listArgs, token.ClientID)
+			argPos++
+		}
+		listQuery += " order by annonce.date_publication desc limit $" + strconv.Itoa(argPos) + " offset $" + strconv.Itoa(argPos+1)
+		listArgs = append(listArgs, r.URL.Query().Get("size"), r.URL.Query().Get("from"))
+
+		rows, err := conn.Query(context.Background(), listQuery, listArgs...)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to query the database")
 			return
@@ -164,7 +270,15 @@ func getAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayl
 
 		var annonce Annonce
 
-		err = conn.QueryRow(context.Background(), "select annonce_id, client.nom as vendeur inner join client on client.client_id = annonce.vendeur, client.nom as acheteur inner join client on client.client_id = annonce.acheteur, categorie.libelle as categorie inner join categorie_annonce on categorie_annonce.categorie_id = annonce.categorie, titre, prix, description, etat, taxe, image, barcode, date_publication from annonce where annonce_id = $1", r.URL.Query().Get("id")).Scan(&annonce.AnnonceID, &annonce.Vendeur, &annonce.Acheteur, &annonce.Categorie, &annonce.Titre, &annonce.Prix, &annonce.Description, &annonce.Etat, &annonce.Taxe, &annonce.Image, &annonce.Barcode, &annonce.Date_Publication)
+		err = conn.QueryRow(context.Background(),
+			`select annonce.annonce_id, vendeur_client.nom, coalesce(acheteur_client.nom, ''), categorie_annonce.libelle,
+			annonce.titre, annonce.prix, annonce.description, annonce.etat, annonce.taxe, annonce.image, annonce.barcode, annonce.date_publication
+			from annonce
+			inner join client vendeur_client on vendeur_client.client_id = annonce.vendeur
+			left join client acheteur_client on acheteur_client.client_id = annonce.acheteur
+			inner join categorie_annonce on categorie_annonce.categorie_id = annonce.categorie
+			where annonce.annonce_id = $1`,
+			r.URL.Query().Get("id")).Scan(&annonce.AnnonceID, &annonce.Vendeur, &annonce.Acheteur, &annonce.Categorie, &annonce.Titre, &annonce.Prix, &annonce.Description, &annonce.Etat, &annonce.Taxe, &annonce.Image, &annonce.Barcode, &annonce.Date_Publication)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to query the database")
 			return
@@ -176,9 +290,40 @@ func getAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayl
 			return
 		}
 
+		var payload map[string]any
+		if err := json.Unmarshal(jsonData, &payload); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to build the response")
+			return
+		}
+
+		materiauxRows, err := conn.Query(context.Background(), "select materieau.materieau_id, materieau.nom from utilise inner join materieau on materieau.materieau_id = utilise.materieau_id where utilise.annonce_id = $1", annonce.AnnonceID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to query the materiaux used")
+			return
+		}
+		defer materiauxRows.Close()
+
+		materiaux := make([]map[string]any, 0)
+		for materiauxRows.Next() {
+			var materieauID int
+			var nom string
+			if err := materiauxRows.Scan(&materieauID, &nom); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to scan the materiaux used")
+				return
+			}
+			materiaux = append(materiaux, map[string]any{"materieau_id": materieauID, "nom": nom})
+		}
+		payload["materiaux"] = materiaux
+
+		finalJSON, err := json.Marshal(payload)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to marshal the annonce")
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jsonData)
+		w.Write(finalJSON)
 	} else {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "You must provide either the id of the annonce or the from and size query params.")
 	}
@@ -246,7 +391,7 @@ func getCategorieAnnonce(w http.ResponseWriter, r *http.Request, token *Introspe
 }
 
 func modifierAnnonce(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_annonces")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_annonces")
 	conn, err := pgx.Connect(context.Background(), DATABASE_PUBLIC_URL)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to connect to the database")
@@ -358,7 +503,7 @@ func envoyerMessageAnnonce(w http.ResponseWriter, r *http.Request, token *Intros
 		return
 	}
 
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_annonces")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_annonces")
 
 	if token.ClientID != vendeur && !isAdmin {
 		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to send messages for this annonce")
@@ -394,7 +539,7 @@ func supprimerMessageAnnonce(w http.ResponseWriter, r *http.Request, token *Intr
 		return
 	}
 
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_annonces")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_annonces")
 
 	if token.ClientID != expediteur && !isAdmin {
 		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to delete this message")
@@ -415,3 +560,6 @@ func modifierMessageAnnonce(w http.ResponseWriter, r *http.Request, token *Intro
 	_ = token.ClientID
 	_ = r.URL.String()
 }
+
+
+
