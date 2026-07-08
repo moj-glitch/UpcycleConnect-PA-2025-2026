@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
+// getEnv reads an environment variable, falling back to a default when it
+// isn't set. Used so every host-specific value (ports, DB URLs, storage
+// paths) can be configured at deploy time instead of hardcoded.
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -20,8 +26,18 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// These mirror the CHECK constraints in create_db.sql exactly. Validating
+// here means a bad phone/siret/postal code comes back as a clean 400 with
+// a useful message, instead of an opaque 500 from a Postgres constraint
+// violation deep inside an insert.
+var (
+	telephoneRegexp  = regexp.MustCompile(`^\+[0-9]{11}$`)
+	siretRegexp      = regexp.MustCompile(`^[0-9]{14}$`)
+	codePostalRegexp = regexp.MustCompile(`^[0-9]{5}$`)
+)
+
 var OAUTH_URL = getEnv("OAUTH_URL", "http://localhost:8080/oauth/v3/introspect")
-var DATA_DIR = getEnv("DATA_DIR", "./DATA")
+var DATA_DIR = getEnv("DATA_DIR", "./DATA") // was a personal Windows path; now relative + overridable
 
 type Thread struct {
 	ThreadID   int    `json:"thread_id"`
@@ -170,10 +186,14 @@ type Materiau struct {
 }
 
 type ClientRolesResponse struct {
-	ClientID				string `json:"client_id"`
-	Roles					[]string `json:"roles"`
+	ClientID string   `json:"client_id"`
+	Roles    []string `json:"roles"`
 }
 
+// tryAuth introspects the bearer token on an incoming request against this
+// same service's /introspect endpoint. It was previously written but never
+// wired into any handler, and it ignored the error from http.NewRequest,
+// which would have caused a nil-pointer panic on failure.
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if contentType != "" && !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") && !strings.HasPrefix(contentType, "multipart/form-data") {
@@ -187,11 +207,12 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
 
-	req, err := http.NewRequest("GET", OAUTH_URL, nil)
+	req, err := http.NewRequest("POST", OAUTH_URL, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "server_error", "Could not build introspection request.")
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("Authorization", authHeader)
 
 	client := &http.Client{}
@@ -258,6 +279,52 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 	}
 
 	return &jsonData
+}
+
+// CEOScope marks a client as the founder/owner of an entreprise. It is never
+// assignable through the RH "create employee" flow - only account
+// registration with account_type=entreprise grants it.
+const CEOScope = "pro:pdg"
+
+// CompanyScopedRoles are the roles automatically granted to whoever
+// registers a new entreprise (the CEO). These are all scoped to "their own
+// company" by the isUserInEntreprise() checks in the api service.
+var CompanyScopedRoles = []string{
+	CEOScope,
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+// RHAssignableRoles is the whitelist of roles an RH user is allowed to grant
+// to a new employee account. CEOScope is deliberately excluded - RH can
+// never create another CEO, no matter what the caller requests.
+var RHAssignableRoles = []string{
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+// grantRoles inserts a possede row for each role libelle, looking up the
+// role_id from the role table. Unknown libelles are silently skipped rather
+// than failing the whole transaction, since role sets can be extended over
+// time without every deploy staying perfectly in sync.
+func grantRoles(ctx context.Context, tx pgx.Tx, clientID int, roleLibelles []string) error {
+	for _, libelle := range roleLibelles {
+		_, err := tx.Exec(
+			ctx,
+			"insert into possede (client_id, role_id) select $1, role_id from role where libelle=$2",
+			clientID, libelle,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func contains(slice []string, item string) bool {
