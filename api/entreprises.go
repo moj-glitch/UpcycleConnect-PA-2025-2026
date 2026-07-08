@@ -69,6 +69,10 @@ func employesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// deposerEntreprise is an admin-only escape hatch (e.g. support creating a
+// company on a client's behalf). The normal path for founding a company is
+// registering with account_type=entreprise on the oauth service, which also
+// makes the registrant its CEO - this endpoint does not.
 func deposerEntreprise(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -123,6 +127,10 @@ func deposerEntreprise(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getEntreprise requires auth. A single entreprise (?id=) can be viewed by
+// an admin, or by anyone who is actually an employee/CEO of that company -
+// this is the "a CEO/employee can only access his own corporation" rule.
+// The listing mode (?from=&size=, across all companies) is admin-only.
 func getEntreprise(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -463,6 +471,9 @@ func deposerEmploye(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getEmployes requires auth and enforces "an employee can only access the
+// data of his own corporation": only pro:entreprise_administrateur /
+// pro:rh_support (global admins) or a member of entrepriseID may list it.
 func getEmployes(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -700,6 +711,12 @@ func employeAccountHandler(w http.ResponseWriter, r *http.Request) {
 	rhCreateEmployeAccount(w, r)
 }
 
+// rhCreateEmployeAccount lets an RH user (pro:rh, scoped to their own
+// entreprise, or pro:rh_support globally) create a brand new client account
+// and attach it to an entreprise as an employee in one step, optionally
+// granting roles. CEOScope ("pro:pdg") can never be granted here, no matter
+// what the request asks for - only account registration as account_type=
+// entreprise can create a CEO.
 func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -732,9 +749,22 @@ func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
 	clientAdresse := r.PostForm.Get("client_adresse")
 	clientCodePostal := r.PostForm.Get("client_code_postal")
 	clientVille := r.PostForm.Get("client_ville")
+	clientSiret := r.PostForm.Get("client_siret") // client table requires a unique siret per row, even for employees
 
-	if clientEmail == "" || clientSecret == "" || clientNom == "" || clientPrenom == "" || clientTelephone == "" || clientAdresse == "" || clientCodePostal == "" || clientVille == "" {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Missing required fields: client_email, client_secret, client_nom, client_prenom, client_telephone, client_adresse, client_code_postal, client_ville")
+	if clientEmail == "" || clientSecret == "" || clientNom == "" || clientPrenom == "" || clientTelephone == "" || clientAdresse == "" || clientCodePostal == "" || clientVille == "" || clientSiret == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Missing required fields: client_email, client_secret, client_nom, client_prenom, client_telephone, client_adresse, client_code_postal, client_ville, client_siret")
+		return
+	}
+	if !telephoneRegexp.MatchString(clientTelephone) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_telephone must be in international format, e.g. +33612345678")
+		return
+	}
+	if !codePostalRegexp.MatchString(clientCodePostal) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_code_postal must be exactly 5 digits")
+		return
+	}
+	if !siretRegexp.MatchString(clientSiret) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_siret must be exactly 14 digits")
 		return
 	}
 
@@ -778,13 +808,13 @@ func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var count int64
-	err = conn.QueryRow(ctx, "select count(client_id) from client where email=$1", clientEmail).Scan(&count)
+	err = conn.QueryRow(ctx, "select count(client_id) from client where email=$1 or siret=$2", clientEmail, clientSiret).Scan(&count)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	if count > 0 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Email already exists.")
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "A client with this email or siret already exists.")
 		return
 	}
 
@@ -804,8 +834,8 @@ func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
 	var newClientID int
 	err = tx.QueryRow(
 		ctx,
-		"insert into client (nom, prenom, email, password, telephone, adresse, code_postal, ville, score) values ($1, $2, $3, $4, $5, $6, $7, $8, 0) returning client_id",
-		clientNom, clientPrenom, clientEmail, hashedPassword, clientTelephone, clientAdresse, clientCodePostal, clientVille,
+		"insert into client (nom, prenom, email, password, telephone, adresse, code_postal, ville, score, siret) values ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9) returning client_id",
+		clientNom, clientPrenom, clientEmail, hashedPassword, clientTelephone, clientAdresse, clientCodePostal, clientVille, clientSiret,
 	).Scan(&newClientID)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -841,3 +871,6 @@ func rhCreateEmployeAccount(w http.ResponseWriter, r *http.Request) {
 		"roles":         grantedRoles,
 	})
 }
+
+
+

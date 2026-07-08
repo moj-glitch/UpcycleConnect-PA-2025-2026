@@ -74,11 +74,12 @@ func deposerThread(w http.ResponseWriter, r *http.Request, token *IntrospectionP
 
 	_, err = conn.Exec(
 		context.Background(),
-		"insert into thread (categorie_thread, titre, message, resolu) values ($1, $2, $3, $4)",
+		"insert into thread (categorie_thread, titre, message, resolu, client_id) values ($1, $2, $3, $4, $5)",
 		r.FormValue("categorie_thread"),
 		r.FormValue("titre"),
 		r.FormValue("message"),
 		r.FormValue("resolu"),
+		token.ClientID,
 	)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to insert the thread")
@@ -86,7 +87,6 @@ func deposerThread(w http.ResponseWriter, r *http.Request, token *IntrospectionP
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	_ = token.ClientID
 }
 
 func getThread(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
@@ -157,11 +157,7 @@ func getThread(w http.ResponseWriter, r *http.Request, token *IntrospectionPaylo
 }
 
 func modifierThread(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_threads")
-	if !isAdmin {
-		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to modify this thread")
-		return
-	}
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_threads")
 
 	conn, err := pgx.Connect(context.Background(), DATABASE_PUBLIC_URL)
 	if err != nil {
@@ -169,6 +165,19 @@ func modifierThread(w http.ResponseWriter, r *http.Request, token *Introspection
 		return
 	}
 	defer conn.Close(context.Background())
+
+	var ownerID *int
+	err = conn.QueryRow(context.Background(), "select client_id from thread where thread_id = $1", r.FormValue("id")).Scan(&ownerID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "Thread not found"})
+		return
+	}
+
+	isOwner := ownerID != nil && *ownerID == token.ClientID
+	if !isAdmin && !isOwner {
+		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to modify this thread")
+		return
+	}
 
 	_, err = conn.Exec(context.Background(), "update thread set categorie_thread = $1, titre = $2, message = $3, resolu = $4 where thread_id = $5", r.FormValue("categorie_thread"), r.FormValue("titre"), r.FormValue("message"), r.FormValue("resolu"), r.FormValue("id"))
 	if err != nil {
@@ -180,7 +189,7 @@ func modifierThread(w http.ResponseWriter, r *http.Request, token *Introspection
 }
 
 func supprimerThread(w http.ResponseWriter, r *http.Request, token *IntrospectionPayload) {
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_threads")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_threads")
 
 	conn, err := pgx.Connect(context.Background(), DATABASE_PUBLIC_URL)
 	if err != nil {
@@ -189,13 +198,15 @@ func supprimerThread(w http.ResponseWriter, r *http.Request, token *Introspectio
 	}
 	defer conn.Close(context.Background())
 
-	var ownerID int
-	err = conn.QueryRow(context.Background(), "select client_id from message_thread where thread_id = $1 order by message_thread_id asc limit 1", r.FormValue("id")).Scan(&ownerID)
+	var ownerID *int
+	err = conn.QueryRow(context.Background(), "select client_id from thread where thread_id = $1", r.FormValue("id")).Scan(&ownerID)
 	if err != nil {
-		ownerID = 0
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "Thread not found"})
+		return
 	}
 
-	if !isAdmin && token.ClientID != ownerID {
+	isOwner := ownerID != nil && *ownerID == token.ClientID
+	if !isAdmin && !isOwner {
 		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to delete this thread")
 		return
 	}
@@ -359,7 +370,7 @@ func supprimerMessageThread(w http.ResponseWriter, r *http.Request, token *Intro
 		return
 	}
 
-	isAdmin := token.Scope != nil && contains(token.Scope, "public:administrateur_des_threads")
+	isAdmin := token.Scope != nil && contains(token.Scope, "public:admin_threads")
 	if token.ClientID != ownerID && !isAdmin {
 		writeAPIError(w, http.StatusUnauthorized, "forbidden", "You don't have the right to delete this message")
 		return
@@ -379,3 +390,5 @@ func modifierMessageThread(w http.ResponseWriter, r *http.Request, token *Intros
 	_ = token.ClientID
 	_ = r.URL.String()
 }
+
+

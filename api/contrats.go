@@ -39,7 +39,7 @@ func hasContratScope(token *IntrospectionPayload, scope string) bool {
 }
 
 func hasAnyContratManagementScope(token *IntrospectionPayload) bool {
-	return hasContratScope(token, "pro:gestionnaire_contrats") || hasContratScope(token, "pro:support_contrat_administrateur")
+	return hasContratScope(token, "pro:gestionnaire_contrats") || hasContratScope(token, "pro:contrat_administrateur")
 }
 
 func getUserEntrepriseID(ctx context.Context, conn *pgx.Conn, clientID int) (int, error) {
@@ -57,13 +57,13 @@ func parseEntrepriseIDFromRequest(ctx context.Context, conn *pgx.Conn, r *http.R
 }
 
 func isContratManagerForEntreprise(ctx context.Context, conn *pgx.Conn, token *IntrospectionPayload, entrepriseID int) bool {
-	isSupport := hasContratScope(token, "pro:support_contrat_administrateur")
+	isSupport := hasContratScope(token, "pro:contrat_administrateur")
 	isOwnManager := hasContratScope(token, "pro:gestionnaire_contrats") && isUserInEntreprise(ctx, conn, token.ClientID, entrepriseID)
 	return isSupport || isOwnManager
 }
 
 func canManageContractDomain(ctx context.Context, conn *pgx.Conn, r *http.Request, token *IntrospectionPayload) bool {
-	if hasContratScope(token, "pro:support_contrat_administrateur") {
+	if hasContratScope(token, "pro:contrat_administrateur") {
 		return true
 	}
 	if !hasContratScope(token, "pro:gestionnaire_contrats") {
@@ -187,6 +187,17 @@ func deposerContrat(w http.ResponseWriter, r *http.Request, token *Introspection
 		return
 	}
 
+	for _, tiersID := range r.Form["tiers"] {
+		if tiersID == "" {
+			continue
+		}
+		_, err = conn.Exec(ctx, "insert into actor (tiers_id, contrat_id) values ($1, $2) on conflict do nothing", tiersID, newContratID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to link a tiers to the contrat")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"message":       "Contrat created successfully",
 		"contrat_id":    newContratID,
@@ -229,7 +240,36 @@ func getContrat(w http.ResponseWriter, r *http.Request, token *IntrospectionPayl
 			return
 		}
 
-		writeJSON(w, http.StatusOK, contrat)
+		tiersRows, err := conn.Query(ctx, "select tiers.tiers_id, tiers.nom from actor inner join tiers on tiers.tiers_id = actor.tiers_id where actor.contrat_id = $1 order by tiers.nom asc", contratID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to query the contrat tiers")
+			return
+		}
+		defer tiersRows.Close()
+
+		tiersList := make([]map[string]any, 0)
+		for tiersRows.Next() {
+			var tiersID int
+			var nom string
+			if err := tiersRows.Scan(&tiersID, &nom); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to scan the contrat tiers")
+				return
+			}
+			tiersList = append(tiersList, map[string]any{"tiers_id": tiersID, "nom": nom})
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"contrat_id":           contrat.ContratID,
+			"entreprise_id":        contrat.EntrepriseID,
+			"categorie_contrat_id": contrat.CategorieContratID,
+			"description":          contrat.Description,
+			"depense":              contrat.Depense,
+			"gain":                 contrat.Gain,
+			"pdf":                  contrat.PDF,
+			"date_debut":           contrat.DateDebut,
+			"date_fin":             contrat.DateFin,
+			"tiers":                tiersList,
+		})
 		return
 	}
 
@@ -263,11 +303,28 @@ func getContrat(w http.ResponseWriter, r *http.Request, token *IntrospectionPayl
 		return
 	}
 
-	rows, err := conn.Query(
-		ctx,
-		"select contrat_id, entreprise_id, categorie_contrat_id, description, depense, gain, pdf, date_debut, date_fin from contrat where entreprise_id=$1 order by date_debut desc offset $2 limit $3",
-		entrepriseID, from, size,
-	)
+	query := "select contrat.contrat_id, contrat.entreprise_id, contrat.categorie_contrat_id, contrat.description, contrat.depense, contrat.gain, contrat.pdf, contrat.date_debut, contrat.date_fin from contrat"
+	args := []any{entrepriseID}
+	argPos := 2
+	conditions := " where contrat.entreprise_id=$1"
+
+	if tiersQ := r.URL.Query().Get("tiers"); tiersQ != "" {
+		query += " inner join actor on actor.contrat_id = contrat.contrat_id inner join tiers on tiers.tiers_id = actor.tiers_id"
+		conditions += " and tiers.nom ilike $" + strconv.Itoa(argPos)
+		args = append(args, "%"+tiersQ+"%")
+		argPos++
+	}
+
+	if q := r.URL.Query().Get("q"); q != "" {
+		conditions += " and contrat.description ilike $" + strconv.Itoa(argPos)
+		args = append(args, "%"+q+"%")
+		argPos++
+	}
+
+	query += conditions + " order by contrat.date_debut desc offset $" + strconv.Itoa(argPos) + " limit $" + strconv.Itoa(argPos+1)
+	args = append(args, from, size)
+
+	rows, err := conn.Query(ctx, query, args...)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to query contrats")
 		return
@@ -404,17 +461,39 @@ func modifierContrat(w http.ResponseWriter, r *http.Request, token *Introspectio
 		argIndex++
 	}
 
-	if len(updates) == 0 {
+	tiersProvided := len(r.Form["tiers"]) > 0
+
+	if len(updates) == 0 && !tiersProvided {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "No fields to update")
 		return
 	}
 
-	args = append(args, contratID)
-	query := "update contrat set " + strings.Join(updates, ", ") + " where contrat_id=$" + strconv.Itoa(argIndex)
-	_, err = conn.Exec(ctx, query, args...)
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to update contrat")
-		return
+	if len(updates) > 0 {
+		args = append(args, contratID)
+		query := "update contrat set " + strings.Join(updates, ", ") + " where contrat_id=$" + strconv.Itoa(argIndex)
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to update contrat")
+			return
+		}
+	}
+
+	if tiersProvided {
+		_, err = conn.Exec(ctx, "delete from actor where contrat_id = $1", contratID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to reset the contrat tiers")
+			return
+		}
+		for _, tiersID := range r.Form["tiers"] {
+			if tiersID == "" {
+				continue
+			}
+			_, err = conn.Exec(ctx, "insert into actor (tiers_id, contrat_id) values ($1, $2) on conflict do nothing", tiersID, contratID)
+			if err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "internal_server_error", "Failed to link a tiers to the contrat")
+				return
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -963,3 +1042,6 @@ func autocompleteCategoriesContratsHandler(w http.ResponseWriter, r *http.Reques
 		"categories": categories,
 	})
 }
+
+
+

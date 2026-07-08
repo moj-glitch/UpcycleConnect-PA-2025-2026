@@ -921,3 +921,6 @@ func getMateriau(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"mode": "pagination", "from": from, "size": size, "total": len(list), "materiaux": list})
 }
+
+
+
