@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -14,7 +13,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-
+// readBasicCredentials decodes a "Basic <base64(identifier:secret)>" header
+// into its two parts. This replaces the two previously-duplicated functions
+// (readBasicClientCredentials / readBasicEmailCredentials) that did exactly
+// the same thing.
 func readBasicCredentials(authHeader string) (string, string, error) {
 	if authHeader == "" {
 		return "", "", http.ErrNoCookie
@@ -47,6 +49,9 @@ func isEmailIdentifier(identifier string) bool {
 	return err == nil
 }
 
+// token issues an access token. The client authenticates with HTTP Basic
+// auth where the username is EITHER their email OR their numeric client_id -
+// isEmailIdentifier decides which lookup to run.
 func token(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "The URI does not support the requested method.")
@@ -188,11 +193,6 @@ func introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.HasPrefix(authHeader, "Basic ") {
-		writeAPIError(w, http.StatusBadRequest, "duplicate_credentials", "You haven't provided a token to introspect.")
-		return
-	}
-
 	tokenToCheck := strings.TrimPrefix(authHeader, "Bearer ")
 
 	conn, err := pgx.Connect(ctx, DATABASE_AUTH_URL)
@@ -249,9 +249,26 @@ func introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scopeRows, err := conn.Query(ctx, "select role.libelle from possede join role on possede.role_id = role.role_id where possede.client_id = $1", clientID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer scopeRows.Close()
+
+	var scopes []string
+	for scopeRows.Next() {
+		var libelle string
+		if err := scopeRows.Scan(&libelle); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		scopes = append(scopes, libelle)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"active":     true,
-		"scope":      "",
+		"scope":      strings.Join(scopes, " "),
 		"client_id":  clientID,
 		"username":   email,
 		"token_type": "Bearer",
@@ -263,6 +280,16 @@ func introspect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// createAccount registers a new client. The caller picks account_type:
+//   - "freemium" (default if omitted): a plain client account, no company.
+//   - "entreprise": also creates a new entreprise, attaches the new client
+//     to it as an employee with no manager, and grants the full set of
+//     company-scoped roles (CompanyScopedRoles, including CEOScope) so the
+//     registrant is immediately the CEO of the company they just founded.
+//
+// Everything below happens in a single transaction: if any step fails,
+// nothing is created - you never end up with a client that has no
+// entreprise, or an entreprise that has no CEO.
 func createAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -297,6 +324,67 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !telephoneRegexp.MatchString(clientTelephone) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_telephone must be in international format, e.g. +33612345678")
+		return
+	}
+	if !codePostalRegexp.MatchString(clientCodePostal) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_code_postal must be exactly 5 digits")
+		return
+	}
+	if !siretRegexp.MatchString(clientSiret) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "client_siret must be exactly 14 digits")
+		return
+	}
+
+	accountType := strings.ToLower(strings.TrimSpace(r.PostForm.Get("account_type")))
+	if accountType == "" {
+		accountType = "freemium"
+	}
+	if accountType != "freemium" && accountType != "entreprise" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "account_type must be 'freemium' or 'entreprise'")
+		return
+	}
+
+	forfaitLibelle := "Freemium"
+	if accountType == "entreprise" {
+		forfaitChoice := strings.ToLower(strings.TrimSpace(r.PostForm.Get("forfait")))
+		if forfaitChoice == "" {
+			forfaitChoice = "gratuit"
+		}
+		switch forfaitChoice {
+		case "gratuit":
+			forfaitLibelle = "Pro Gratuit"
+		case "payant":
+			forfaitLibelle = "Pro Payant"
+		default:
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "forfait must be 'gratuit' or 'payant'")
+			return
+		}
+	}
+
+	var entrepriseNom, entrepriseAdresse, entrepriseCodePostal, entrepriseVille, entrepriseSiret string
+	if accountType == "entreprise" {
+		entrepriseNom = r.PostForm.Get("entreprise_nom")
+		entrepriseAdresse = r.PostForm.Get("entreprise_adresse")
+		entrepriseCodePostal = r.PostForm.Get("entreprise_code_postal")
+		entrepriseVille = r.PostForm.Get("entreprise_ville")
+		entrepriseSiret = r.PostForm.Get("entreprise_siret")
+
+		if entrepriseNom == "" || entrepriseAdresse == "" || entrepriseCodePostal == "" || entrepriseVille == "" || entrepriseSiret == "" {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "account_type=entreprise requires entreprise_nom, entreprise_adresse, entreprise_code_postal, entreprise_ville, entreprise_siret")
+			return
+		}
+		if !codePostalRegexp.MatchString(entrepriseCodePostal) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "entreprise_code_postal must be exactly 5 digits")
+			return
+		}
+		if !siretRegexp.MatchString(entrepriseSiret) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "entreprise_siret must be exactly 14 digits")
+			return
+		}
+	}
+
 	conn, err := pgx.Connect(ctx, DATABASE_AUTH_URL)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -305,14 +393,14 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(ctx)
 
 	var count int64
-	err = conn.QueryRow(ctx, "select count(client_id) from client where email=$1", clientEmail).Scan(&count)
+	err = conn.QueryRow(ctx, "select count(client_id) from client where email=$1 or siret=$2", clientEmail, clientSiret).Scan(&count)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	if count > 0 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "Email already exists.")
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "A client with this email or siret already exists.")
 		return
 	}
 
@@ -322,8 +410,15 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	var newClientID int
-	err = conn.QueryRow(
+	err = tx.QueryRow(
 		ctx,
 		"insert into client (nom, prenom, email, password, telephone, adresse, code_postal, ville, score, siret) values ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9) returning client_id",
 		clientNom,
@@ -341,8 +436,80 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"message":   "Account created successfully",
-		"client_id": newClientID,
-	})
+	response := map[string]any{
+		"message":      "Account created successfully",
+		"client_id":    newClientID,
+		"account_type": accountType,
+	}
+
+	if accountType == "entreprise" {
+		var entrepriseCount int64
+		err = tx.QueryRow(ctx, "select count(entreprise_id) from entreprise where nom=$1 or siret=$2", entrepriseNom, entrepriseSiret).Scan(&entrepriseCount)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if entrepriseCount > 0 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "An entreprise with this nom or siret already exists.")
+			return
+		}
+
+		var newEntrepriseID int
+		err = tx.QueryRow(
+			ctx,
+			"insert into entreprise (nom, adresse, code_postal, ville, siret) values ($1, $2, $3, $4, $5) returning entreprise_id",
+			entrepriseNom, entrepriseAdresse, entrepriseCodePostal, entrepriseVille, entrepriseSiret,
+		).Scan(&newEntrepriseID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = tx.Exec(
+			ctx,
+			"insert into employe (entreprise_id, client_id, manager_id) values ($1, $2, null)",
+			newEntrepriseID, newClientID,
+		)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		if err := grantRoles(ctx, tx, newClientID, CompanyScopedRoles); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		response["entreprise_id"] = newEntrepriseID
+		response["roles"] = CompanyScopedRoles
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		"insert into souscrit (client_id, forfait_id) select $1, forfait_id from forfait where libelle=$2",
+		newClientID, forfaitLibelle,
+	)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if forfaitLibelle == "Pro Gratuit" {
+		_, err = tx.Exec(
+			ctx,
+			"insert into souscrit (client_id, forfait_id) select $1, forfait_id from forfait where libelle='Freemium'",
+			newClientID,
+		)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+	}
+	response["forfait"] = forfaitLibelle
+
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, response)
 }

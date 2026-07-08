@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -20,9 +23,14 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+var (
+	telephoneRegexp  = regexp.MustCompile(`^\+[0-9]{11}$`)
+	siretRegexp      = regexp.MustCompile(`^[0-9]{14}$`)
+	codePostalRegexp = regexp.MustCompile(`^[0-9]{5}$`)
+)
+
 var OAUTH_URL = getEnv("OAUTH_URL", "http://localhost:8080/oauth/v3/introspect")
 var DATA_DIR = getEnv("DATA_DIR", "./DATA")
-
 type Thread struct {
 	ThreadID   int    `json:"thread_id"`
 	Categorie  int    `json:"categorie_thread"`
@@ -170,8 +178,8 @@ type Materiau struct {
 }
 
 type ClientRolesResponse struct {
-	ClientID				string `json:"client_id"`
-	Roles					[]string `json:"roles"`
+	ClientID string   `json:"client_id"`
+	Roles    []string `json:"roles"`
 }
 
 func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
@@ -187,11 +195,12 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
 
-	req, err := http.NewRequest("GET", OAUTH_URL, nil)
+	req, err := http.NewRequest("POST", OAUTH_URL, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "server_error", "Could not build introspection request.")
 		return &IntrospectionPayload{false, nil, 0, ""}
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("Authorization", authHeader)
 
 	client := &http.Client{}
@@ -258,6 +267,39 @@ func tryAuth(w http.ResponseWriter, r *http.Request) *IntrospectionPayload {
 	}
 
 	return &jsonData
+}
+
+const CEOScope = "pro:pdg"
+
+var CompanyScopedRoles = []string{
+	CEOScope,
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+var RHAssignableRoles = []string{
+	"pro:entreprise_manager",
+	"pro:rh",
+	"pro:manager",
+	"pro:gestionnaire_contrats",
+	"pro:project_manager",
+}
+
+func grantRoles(ctx context.Context, tx pgx.Tx, clientID int, roleLibelles []string) error {
+	for _, libelle := range roleLibelles {
+		_, err := tx.Exec(
+			ctx,
+			"insert into possede (client_id, role_id) select $1, role_id from role where libelle=$2",
+			clientID, libelle,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func contains(slice []string, item string) bool {
