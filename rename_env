@@ -1,0 +1,15 @@
+# docker-compose reads this automatically.
+#
+# IMPORTANT: the app services (oauth, api) only read plain environment
+# variables (getEnv), so their DATABASE_AUTH_URL is built here from
+# POSTGRES_PASSWORD - it must match secrets/db_password.txt's content,
+# since that file is what actually sets the password on the db container
+# via Postgres' native POSTGRES_PASSWORD_FILE support.
+#
+# If you change the password, update BOTH this line and
+# secrets/db_password.txt.
+POSTGRES_DB=database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=change_me_db_password
+APP_BASE_URL=http://localhost
+STRIPE_SECRET_KEY=
