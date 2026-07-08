@@ -1,0 +1,75 @@
+<html>
+    <head>
+        <link rel="stylesheet" href="/style.css">
+        <meta charset="UTF-8">
+        <?php
+            session_start();
+            if (!isset($_SESSION['token'])) {
+                header("Location: ../connection.php");
+                exit();
+            }
+
+            require_once __DIR__ . "/../private/do.getLanguages.php";
+            require_once __DIR__ . "/../api.php";
+            $lang = $LANGUAGE_CONTENTS;
+
+            $response = api_request(API_URL . "/api/v1/applications", 'GET', array(api_bearer_header()));
+            $applications = json_decode($response['body'], true);
+        ?>
+        <title><?php echo $lang[$APPLICATIONS_TITLE]?></title>
+    </head>
+    <body id="body">
+        <header>
+            <a href="../languages.php?lang=<?= $LOADED_LANGUAGE ?>&redirect=<?= urlencode(basename($_SERVER['PHP_SELF'])); ?>">
+                <img
+                    src="<?= "../private/lang/" . $LOADED_LANGUAGE . ".svg" ?>"
+                    alt=<?= $LOADED_LANGUAGE . " language switch button" ?>
+                    height="87"
+                    width="100"/>
+            </a>
+        </header>
+        <main>
+            <section>
+                <h1><?php echo $lang[$APPLICATIONS_TITLE]?></h1>
+                <?php if (isset($_GET['success'])): ?>
+                <p><?php echo $lang[$APPLICATIONS_PAYMENT_SUCCESS]?></p>
+                <?php endif; ?>
+                <?php if (isset($_GET['error'])): ?>
+                <p><?php echo $lang[$APPLICATIONS_PAYMENT_ERROR]?></p>
+                <?php endif; ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th><?php echo $lang[$ANNONCES_NAME_LABEL]?></th>
+                            <th><?php echo $lang[$ANNONCES_DESCRIPTION_LABEL]?></th>
+                            <th><?php echo $lang[$ANNONCES_PRICE_LABEL]?></th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (!empty($applications)): foreach ($applications as $application): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($application['nom']); ?></td>
+                            <td><?php echo htmlspecialchars($application['description']); ?></td>
+                            <td><?php echo number_format($application['prix'], 2, ',', ' '); ?>€</td>
+                            <td>
+                                <?php if ($application['achetee']): ?>
+                                <?php echo $lang[$APPLICATIONS_OWNED_LABEL]?>
+                                <?php else: ?>
+                                <form action="../private/do.checkoutApplication.php" method="POST">
+                                    <input type="hidden" name="application_id" value="<?php echo $application['application_id']; ?>">
+                                    <button type="submit"><?php echo $lang[$APPLICATIONS_BUY_LABEL]?></button>
+                                </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; endif; ?>
+                    </tbody>
+                </table>
+            </section>
+        </main>
+        <footer>
+            Tout droits reserve a Cycle Connect Enterprise
+        </footer>
+    </body>
+</html>

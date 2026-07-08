@@ -1,0 +1,154 @@
+Se Connecter
+S'inscrire
+Email
+Mot de Passe
+Confirmer le mot de passe
+Langues
+Cette page dans d'autres langues
+Séléction des rôles
+Vos rôles
+Forums
+Éléments par page
+Résolu
+Sujet
+Aperçu
+Date
+Oui
+Non
+Annonces
+Éléments par page
+Catégorie
+Titre
+Prix
+Description
+Date
+Image
+Statut
+Précédent
+Suivant
+Répondre
+Aimer
+Ne pas aimer
+Vendeur
+Acheteur
+Messages
+Retour
+Message
+Auteur
+Date
+Mes applications
+Bienvenue
+Annonces
+Espace conseil
+Evenements
+Tutoriels
+Se deconnecter
+Nom
+Prenom
+Telephone
+Adresse
+Code postal
+Ville
+Siret
+Email ou mot de passe incorrect
+Inscription impossible, verifiez vos informations
+Deposer une annonce
+Publier
+Supprimer
+Deposer une annonce
+Ouvrir une discussion
+Categorie
+Publier
+Repondre
+Marquer comme resolu
+Ouvrir une discussion
+Evenements
+Statut
+Tutoriels
+Mon planning
+Mes prochains evenements
+Ouvrir le planning
+Ajouter un evenement
+Titre
+Description
+Date de debut
+Date de fin
+Ajouter
+Modifier
+Supprimer
+Rejoindre
+Quitter
+Materiaux utilises
+Acheter
+Achat impossible, cette annonce n'est plus disponible
+UpCycling Score
+Type de compte
+Particulier
+Professionnel
+Forfait
+Gratuit
+Payant
+Nom de l'entreprise
+Adresse de l'entreprise
+Code postal de l'entreprise
+Ville de l'entreprise
+Siret de l'entreprise
+Modifier
+Modifier l'annonce
+Disponible
+Vendue
+Mes contrats
+Mes projets
+Points relais
+Applications
+Back-office applications
+Contrats
+Numero de contrat
+Mot clef
+Rechercher
+Depenses
+Gains
+PDF
+Date de debut
+Date de fin
+Deposer un contrat
+Enregistrer
+Projets
+Deposer un projet
+Texte
+Publier
+Mettre en avant
+Montant mensuel de la campagne (100 a 500)
+Campagne payee, merci
+Points relais
+Code barre
+Applications
+Achetee
+Acheter
+Paiement reussi, application debloquee
+Le paiement a echoue
+Gestion des prix des applications
+Enregistrer
+Tiers
+Tiers lies
+Back-office interne
+Back-office interne
+Moderation des forums
+Moderation des annonces
+Gestion des evenements
+Gestion des tutoriels
+Gestion des clients et roles
+Supprimer
+Roles
+Attribuer
+Retirer
+Recherche (email ou nom)
+Creer un evenement
+Planifie
+En cours
+Annule
+Creer un tutoriel
+Article
+Video
+Enregistrer
+Aucun acces administrateur avec vos roles

@@ -1,0 +1,154 @@
+Log In
+Sign In
+Email
+Password
+Confirm Password
+Languages
+This page in other languages
+Role Selection
+Your roles:
+Forums
+Items per page
+Resolved
+Topic
+Preview
+Date
+Yes
+No
+Announcements
+Items per page
+Category
+Title
+Price
+Description
+Date
+Image
+State
+Previous
+Next
+Reply
+Like
+Dislike
+Seller
+Buyer
+Messages
+Back
+Message
+Author
+Date
+My apps
+Welcome
+Announcements
+Support
+Events
+Tutorials
+Log out
+Last name
+First name
+Phone
+Address
+Postal code
+City
+Siret
+Incorrect email or password
+Registration failed, check your information
+Post an announcement
+Submit
+Delete
+Post an announcement
+Start a thread
+Category
+Submit
+Reply
+Mark as resolved
+Start a thread
+Events
+Status
+Tutorials
+My planning
+My upcoming events
+Open planning
+Add an event
+Title
+Description
+Start date
+End date
+Add
+Edit
+Delete
+Join
+Leave
+Materials used
+Buy
+Purchase failed, this listing is no longer available
+UpCycling Score
+Account type
+Individual
+Professional
+Plan
+Free
+Paid
+Company name
+Company address
+Company postal code
+Company city
+Company Siret
+Edit
+Edit the announcement
+Available
+Sold
+My contracts
+My projects
+Pickup points
+Applications
+Applications back-office
+Contracts
+Contract number
+Keyword
+Search
+Expenses
+Earnings
+PDF
+Start date
+End date
+Submit a contract
+Save
+Projects
+Submit a project
+Text
+Publish
+Promote
+Monthly campaign amount (100 to 500)
+Campaign paid, thank you
+Pickup points
+Barcode
+Applications
+Owned
+Buy
+Payment successful, application unlocked
+Payment failed
+Application price management
+Save
+Third parties
+Linked third parties
+Internal back-office
+Internal back-office
+Forum moderation
+Announcements moderation
+Events management
+Tutorials management
+Clients and roles management
+Delete
+Roles
+Grant
+Revoke
+Search (email or name)
+Create an event
+Planned
+Ongoing
+Cancelled
+Create a tutorial
+Article
+Video
+Save
+No administrator access with your roles

@@ -1,0 +1,103 @@
+body {
+    font-family: Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 30px;
+    color: #041008;
+    background-color: #FFFFFF;
+    margin: 0;
+}
+
+header {
+    background-color: #F0FFF1;
+    padding: 8px 16px;
+    border-bottom: 2px solid #2D8D3B;
+}
+
+main {
+    padding: 16px;
+}
+
+h1 {
+    font-family: Roboto, sans-serif;
+    font-size: 36px;
+    font-weight: bold;
+    color: #041008;
+}
+
+h2 {
+    font-family: Roboto, sans-serif;
+    font-size: 20px;
+    font-weight: normal;
+    text-decoration: underline;
+    color: #041008;
+}
+
+.home-title {
+    font-family: "Century Gothic", sans-serif;
+    font-size: 24px;
+    text-decoration: underline;
+    font-weight: normal;
+}
+
+nav a, header a {
+    font-size: 16px;
+    color: #041008;
+    margin-right: 12px;
+}
+
+a {
+    color: #2D8D3B;
+}
+
+button, input[type="submit"] {
+    font-family: Roboto, sans-serif;
+    font-size: 20px;
+    color: #041008;
+    background-color: #F0FFF1;
+    border: 1px solid #2D8D3B;
+    border-radius: 20px;
+    padding: 6px 20px;
+    cursor: pointer;
+}
+
+button:hover, input[type="submit"]:hover {
+    background-color: #39C93A;
+}
+
+input, select, textarea {
+    font-family: Roboto, sans-serif;
+    font-size: 16px;
+    color: #041008;
+    border: 1px solid #2D8D3B;
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin: 4px 0;
+}
+
+table {
+    border-collapse: collapse;
+    margin: 12px 0;
+}
+
+th, td {
+    border: 1px solid #2D8D3B;
+    padding: 6px 12px;
+    text-align: left;
+}
+
+th {
+    background-color: #F0FFF1;
+}
+
+footer {
+    font-family: Garamond, serif;
+    font-size: 10px;
+    color: #041008;
+    padding: 8px 16px;
+    border-top: 1px solid #2D8D3B;
+}
+
+img {
+    max-width: 300px;
+    height: auto;
+}
